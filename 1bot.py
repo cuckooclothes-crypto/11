@@ -7,14 +7,14 @@ from aiogram.types import TelegramObject
 from typing import Callable, Dict, Any, Awaitable
 
 # ===== НАСТРОЙКИ =====
-TOKEN = "8617615907:AAEvE6tQZLwbd-Mmz_pPu2soVXpwD_crG4o"
-ADMIN_ID = 854447207  # ЗАМЕНИТЕ НА СВОЙ TELEGRAM ID
+TOKEN = "8617615907:AAEvE6tQZLwbd-Mmz_pPu2soVXpwD_crG4o"  # ВСТАВЬТЕ СВОЙ ТОКЕН
+ADMIN_ID = 854447207  # ВСТАВЬТЕ СВОЙ TELEGRAM ID (узнайте у @userinfobot)
 
 # Список разрешённых пользователей (загружается при старте)
 ALLOWED_USERS = []
 
 # Хранилище заявок (в памяти)
-PENDING_REQUESTS = {}  # {user_id: {"username": "...", "full_name": "..."}}
+PENDING_REQUESTS = {}
 
 # Программы
 PROGRAMS = {
@@ -43,7 +43,18 @@ dp = Dispatcher()
 def is_user_allowed(user_id: int) -> bool:
     return user_id in ALLOWED_USERS
 
-# Middleware для проверки доступа
+def request_access_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📝 Подать заявку на доступ", callback_data="request_access")]
+    ])
+
+def main_menu():
+    buttons = []
+    for key, prog in PROGRAMS.items():
+        buttons.append([InlineKeyboardButton(text=prog["name"], callback_data=key)])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+# ===== MIDDLEWARE ДЛЯ ПРОВЕРКИ ДОСТУПА =====
 class AccessMiddleware(BaseMiddleware):
     async def __call__(
         self,
@@ -62,39 +73,40 @@ class AccessMiddleware(BaseMiddleware):
         if user:
             user_id = user.id
             
-            # Команды, доступные даже без доступа
+            # Администратора пропускаем без проверок
+            if user_id == ADMIN_ID:
+                return await handler(event, data)
+            
+            # Команды, доступные без доступа
             is_auth_command = False
             if hasattr(event, 'message') and event.message:
                 text = event.message.text or ""
-                if text.startswith('/start') or text.startswith('/request') or text.startswith('/myid'):
+                if text.startswith('/start') or text.startswith('/status'):
                     is_auth_command = True
             if hasattr(event, 'callback_query') and event.callback_query:
                 if event.callback_query.data in ["request_access", "menu"]:
                     is_auth_command = True
             
             if not is_user_allowed(user_id) and not is_auth_command:
-                await event.message.answer(
-                    "🚫 *Доступ запрещён*\n\n"
-                    "Нажмите кнопку ниже, чтобы отправить заявку администратору.",
-                    reply_markup=request_access_keyboard(),
-                    parse_mode="Markdown"
-                )
-                if hasattr(event, 'callback_query') and event.callback_query:
+                if hasattr(event, 'message') and event.message:
+                    await event.message.answer(
+                        "🚫 *Доступ запрещён*\n\n"
+                        "Нажмите кнопку ниже, чтобы отправить заявку администратору.",
+                        reply_markup=request_access_keyboard(),
+                        parse_mode="Markdown"
+                    )
+                elif hasattr(event, 'callback_query') and event.callback_query:
+                    if event.callback_query.message:
+                        await event.callback_query.message.answer(
+                            "🚫 *Доступ запрещён*\n\n"
+                            "Нажмите кнопку ниже, чтобы отправить заявку администратору.",
+                            reply_markup=request_access_keyboard(),
+                            parse_mode="Markdown"
+                        )
                     await event.callback_query.answer()
                 return
         
         return await handler(event, data)
-
-def request_access_keyboard():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📝 Подать заявку на доступ", callback_data="request_access")]
-    ])
-
-def main_menu():
-    buttons = []
-    for key, prog in PROGRAMS.items():
-        buttons.append([InlineKeyboardButton(text=prog["name"], callback_data=key)])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 # ===== КОМАНДА /start =====
 @dp.message(Command("start"))
@@ -119,13 +131,14 @@ async def cmd_start(message: types.Message):
 # ===== ОТПРАВКА ЗАЯВКИ =====
 @dp.callback_query(lambda c: c.data == "request_access")
 async def request_access(callback: types.CallbackQuery):
+    await callback.answer()
+    
     user_id = callback.from_user.id
     username = callback.from_user.username or "нет username"
     full_name = callback.from_user.full_name
     
     if is_user_allowed(user_id):
         await callback.message.answer("✅ У вас уже есть доступ! Выберите программу:", reply_markup=main_menu())
-        await callback.answer()
         return
     
     # Сохраняем заявку
@@ -149,8 +162,7 @@ async def request_access(callback: types.CallbackQuery):
         f"📝 *Новая заявка на доступ!*\n\n"
         f"👤 Имя: {full_name}\n"
         f"🆔 Username: @{username}\n"
-        f"📱 ID: `{user_id}`\n"
-        f"⏰ Время: {callback.message.date}",
+        f"📱 ID: `{user_id}`",
         reply_markup=admin_keyboard,
         parse_mode="Markdown"
     )
@@ -161,12 +173,12 @@ async def request_access(callback: types.CallbackQuery):
         "После одобрения вы получите уведомление.",
         parse_mode="Markdown"
     )
-    await callback.answer()
 
 # ===== ОБРАБОТКА РЕШЕНИЯ АДМИНИСТРАТОРА =====
 @dp.callback_query(lambda c: c.data.startswith("approve_") or c.data.startswith("deny_"))
 async def handle_admin_decision(callback: types.CallbackQuery):
     await callback.answer()
+    
     # Проверяем, что команду дал администратор
     if callback.from_user.id != ADMIN_ID:
         await callback.answer("⛔ У вас нет прав для этого действия.", show_alert=True)
@@ -227,7 +239,7 @@ async def handle_admin_decision(callback: types.CallbackQuery):
         
         await callback.answer("❌ Пользователь отклонён")
 
-# ===== КОМАНДА ДЛЯ ПРОВЕРКИ СВОЕГО СТАТУСА =====
+# ===== КОМАНДА ДЛЯ ПРОВЕРКИ СТАТУСА =====
 @dp.message(Command("status"))
 async def check_status(message: types.Message):
     user_id = message.from_user.id
@@ -238,33 +250,6 @@ async def check_status(message: types.Message):
             "⏳ У вас пока нет доступа.\n"
             "Нажмите /start и отправьте заявку администратору."
         )
-
-# ===== ОБРАБОТКА ВЫБОРА ПРОГРАММЫ =====
-@dp.callback_query()
-async def handle_choice(callback: types.CallbackQuery):
-    if not is_user_allowed(callback.from_user.id):
-        await callback.answer("⛔ У вас нет доступа. Отправьте заявку через /start", show_alert=True)
-        return
-    
-    if callback.data == "menu":
-        await callback.message.answer(
-            "Главное меню:",
-            reply_markup=main_menu()
-        )
-        await callback.answer()
-        return
-    
-    prog = PROGRAMS.get(callback.data)
-    if prog:
-        await callback.message.answer(
-            f"📋 *{prog['name']}*\n\n{prog['description']}\n\n(Видео и аудио будут добавлены позже)",
-            parse_mode="Markdown"
-        )
-        back_btn = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 В главное меню", callback_data="menu")]
-        ])
-        await callback.message.answer("Что дальше?", reply_markup=back_btn)
-    await callback.answer()
 
 # ===== КОМАНДА ДЛЯ АДМИНИСТРАТОРА (список пользователей) =====
 @dp.message(Command("users"))
@@ -282,6 +267,30 @@ async def list_users(message: types.Message):
         f"📋 *Список пользователей с доступом:*\n\n{users_list}\n\nВсего: {len(ALLOWED_USERS)}",
         parse_mode="Markdown"
     )
+
+# ===== ОБРАБОТКА ВЫБОРА ПРОГРАММЫ =====
+@dp.callback_query()
+async def handle_choice(callback: types.CallbackQuery):
+    if not is_user_allowed(callback.from_user.id):
+        await callback.answer("⛔ У вас нет доступа.", show_alert=True)
+        return
+    
+    if callback.data == "menu":
+        await callback.message.answer("Главное меню:", reply_markup=main_menu())
+        await callback.answer()
+        return
+    
+    prog = PROGRAMS.get(callback.data)
+    if prog:
+        await callback.message.answer(
+            f"📋 *{prog['name']}*\n\n{prog['description']}\n\n(Видео и аудио будут добавлены позже)",
+            parse_mode="Markdown"
+        )
+        back_btn = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 В главное меню", callback_data="menu")]
+        ])
+        await callback.message.answer("Что дальше?", reply_markup=back_btn)
+    await callback.answer()
 
 # ===== ЗАПУСК =====
 dp.update.middleware(AccessMiddleware())
