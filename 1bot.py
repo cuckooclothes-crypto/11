@@ -166,6 +166,7 @@ async def request_access(callback: types.CallbackQuery):
 # ===== ОБРАБОТКА РЕШЕНИЯ АДМИНИСТРАТОРА =====
 @dp.callback_query(lambda c: c.data.startswith("approve_") or c.data.startswith("deny_"))
 async def handle_admin_decision(callback: types.CallbackQuery):
+    await callback.answer()
     # Проверяем, что команду дал администратор
     if callback.from_user.id != ADMIN_ID:
         await callback.answer("⛔ У вас нет прав для этого действия.", show_alert=True)
