@@ -324,6 +324,7 @@ async def receive_contact(message: types.Message, state: FSMContext):
 
 # Запуск бота
 async def main():
+      await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
