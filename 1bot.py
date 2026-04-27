@@ -9,8 +9,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 # --- Конфигурация ---
-BOT_TOKEN = "ВАШ_ТОКЕН_БОТА"
-ADMIN_ID = 123456789  # Замените на ваш Telegram ID (число)
+BOT_TOKEN = "8617615907:AAEvE6tQZLwbd-Mmz_pPu2soVXpwD_crG4o"
+ADMIN_ID = 854447207  # Замените на ваш Telegram ID (число)
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
