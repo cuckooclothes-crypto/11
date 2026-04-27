@@ -2,21 +2,24 @@ import asyncio
 import logging
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart
-from aiogram.types import (
-    ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
-)
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
 
-# --- Конфигурация ---
-BOT_TOKEN = "8617615907:AAEvE6tQZLwbd-Mmz_pPu2soVXpwD_crG4o"
+# --- КОНФИГУРАЦИЯ ---
+BOT_TOKEN = "8617615907:AAEvE6tQZLwbd-Mmz_pPu2soVXpwD_crG4o"  # Замените на реальный токен
 ADMIN_ID = 854447207  # Замените на ваш Telegram ID (число)
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 
-# --- Клавиатуры ---
-# Главное меню с программами
+# Инициализация бота и диспетчера
+bot = Bot(token=BOT_TOKEN)
+storage = MemoryStorage()
+dp = Dispatcher(storage=storage)
+
+# --- КЛАВИАТУРЫ ---
 main_menu_kb = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="Программа «Восстановление»")],
@@ -28,19 +31,16 @@ main_menu_kb = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-# Кнопка завершения программы (после описания)
 complete_btn_kb = ReplyKeyboardMarkup(
     keyboard=[[KeyboardButton(text="Программа пройдена ✅")]],
     resize_keyboard=True
 )
 
-# Кнопка "Программа пройдена ✅" (для Ресурсного кода)
 complete_alt_kb = ReplyKeyboardMarkup(
-    keyboard=[[KeyboardButton(text="Программа пройдена ✅")]],
+    keyboard=[[KeyboardButton(text="Я прошел программу ✅")]],
     resize_keyboard=True
 )
 
-# Кнопки после рекомендаций
 after_recommendations_kb = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="Вернуться к выбору программ")],
@@ -49,20 +49,19 @@ after_recommendations_kb = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-# Кнопка для возврата в главное меню (после заявки)
 back_to_main_kb = ReplyKeyboardMarkup(
     keyboard=[[KeyboardButton(text="Вернуться к выбору программ")]],
     resize_keyboard=True
 )
 
-# --- Состояния для заявки ---
+# --- СОСТОЯНИЯ ---
 class OrderStates(StatesGroup):
-    waiting_for_phone = State()
+    waiting_for_contact = State()
 
-# --- Хранилище временных данных пользователя ---
+# --- ХРАНИЛИЩЕ ---
 user_temp = {}
 
-# --- Описания программ ---
+# --- ДАННЫЕ ПРОГРАММ ---
 programs_data = {
     "Программа «Восстановление»": {
         "description": (
@@ -151,7 +150,7 @@ programs_data = {
             "• Дневник наблюдений: Обязательно фиксируйте новые идеи, инсайты и изменения в состоянии. Ваш прогресс — это база для долгосрочного масштабирования личности.\n"
             "Раскройте свой истинный потенциал.",
             "Ваш ежедневный план:\n"
-            "1. Дыхательная практика: Закрепление новой нейронной архитектуры. 👉 [Смотреть видео-инструкцию](https://t.me/c/2776024589/142)\n"
+            "1. Дыхательная практика: Закрепление новой нейронной архитектуры. 👉 [Смотреть видео](https://t.me/c/2776024589/142)\n"
             "2. Нейромедитация: Синхронизация работы полушарий для генерации идей. 👉 (аудиофайл)"
         ]
     },
@@ -181,7 +180,7 @@ programs_data = {
             "• Дневник наблюдений: Фиксируйте уровень своей энергии и концентрации каждый день. Это поможет вам понять свой личный алгоритм входа в ресурсное состояние.\n"
             "Верните себе продуктивность за один визит.",
             "Ваш ежедневный план:\n"
-            "1. Дыхательная практика: Моментальное переключение вегетативной системы. 👉 [Смотреть видео-инструкцию](https://t.me/c/2776024589/142)\n"
+            "1. Дыхательная практика: Моментальное переключение вегетативной системы. 👉 [Смотреть видео](https://t.me/c/2776024589/142)\n"
             "2. Нейромедитация: Поддержание ментального баланса и фокуса. 👉 (аудиофайл)"
         ]
     },
@@ -212,47 +211,41 @@ programs_data = {
             "• Системность: Каждый день (утро/вечер) без исключений.\n"
             "• Дневник наблюдений: Обязательно ведите ежедневные записи своих состояний, реакций и идей. Это позволит оцифровать качественный скачок в вашей личной и деловой эффективности.",
             "Ваш ежедневный план:\n"
-            "1. Дыхательная практика: Удержание парасимпатического тонуса. 👉 [Смотреть видео-инструкцию](https://t.me/c/2776024589/142)\n"
+            "1. Дыхательная практика: Удержание парасимпатического тонуса. 👉 [Видео](https://t.me/c/2776024589/142)\n"
             "2. Нейромедитация: Синхронизация состояний. 👉 (аудиофайл)\n\n"
             "Станьте хозяином своего состояния."
         ]
     }
 }
 
-# --- Обработчики бота ---
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
-
+# --- ОБРАБОТЧИКИ ---
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
-    user_id = message.from_user.id
     await message.answer(
         "Добро пожаловать! Пожалуйста, выберете забронированную Вами программу:",
         reply_markup=main_menu_kb
     )
 
 @dp.message(F.text.in_(list(programs_data.keys())))
-async def show_program(message: types.Message, state: FSMContext):
+async def show_program(message: types.Message):
     program_name = message.text
     data = programs_data[program_name]
     user_id = message.from_user.id
     user_temp[user_id] = {"program": program_name}
     
-    # Отправляем описание программы
-    await message.answer(data["description"], parse_mode="Markdown")
-    # Отправляем подготовку
-    await message.answer(data["preparation"], parse_mode="Markdown")
+    await message.answer(data["description"])
+    await message.answer(data["preparation"])
     
-    # Выбираем нужную кнопку завершения
     if program_name == "Программа «Ресурсный код»":
         await message.answer("Нажмите, когда пройдете программу:", reply_markup=complete_alt_kb)
     else:
         await message.answer("Нажмите, когда пройдете программу:", reply_markup=complete_btn_kb)
 
 @dp.message(F.text.in_(["Программа пройдена ✅", "Я прошел программу ✅"]))
-async def program_completed(message: types.Message, state: FSMContext):
+async def program_completed(message: types.Message):
     user_id = message.from_user.id
     program_name = user_temp.get(user_id, {}).get("program")
+    
     if not program_name:
         await message.answer("Сначала выберите программу из меню.", reply_markup=main_menu_kb)
         return
@@ -260,9 +253,8 @@ async def program_completed(message: types.Message, state: FSMContext):
     data = programs_data.get(program_name)
     if data:
         for rec in data["recommendations"]:
-            await message.answer(rec, parse_mode="Markdown", disable_web_page_preview=True)
+            await message.answer(rec, disable_web_page_preview=True)
         
-        # Кнопки после рекомендаций
         await message.answer(
             "Выберите дальнейшее действие:",
             reply_markup=after_recommendations_kb
@@ -285,24 +277,24 @@ async def ask_contact(message: types.Message, state: FSMContext):
         "Пример: +7 123 456 78 90, Иван Иванов\n\n"
         "Эти данные будут переданы администратору для связи."
     )
-    await state.set_state(OrderStates.waiting_for_phone)
+    await state.set_state(OrderStates.waiting_for_contact)
 
-@dp.message(OrderStates.waiting_for_phone)
+@dp.message(OrderStates.waiting_for_contact)
 async def receive_contact(message: types.Message, state: FSMContext):
     contact_info = message.text
     user = message.from_user
     user_id = user.id
     username = user.username or "Нет username"
     full_name = user.full_name
+    program_name = user_temp.get(user_id, {}).get("program", "Неизвестно")
     
-    # Формируем сообщение админу
     admin_msg = (
         f"📩 Новая заявка на клубную карту!\n"
         f"👤 Имя: {full_name}\n"
         f"🆔 User ID: {user_id}\n"
         f"🔗 Username: @{username}\n"
-        f"📞 Контакт от пользователя: {contact_info}\n"
-        f"📅 Программа, которую проходил: {user_temp.get(user_id, {}).get('program', 'Неизвестно')}"
+        f"📞 Контакт: {contact_info}\n"
+        f"📅 Программа: {program_name}"
     )
     
     try:
@@ -313,18 +305,18 @@ async def receive_contact(message: types.Message, state: FSMContext):
             reply_markup=back_to_main_kb
         )
     except Exception as e:
-        logging.error(f"Не удалось отправить сообщение админу: {e}")
+        logging.error(f"Ошибка отправки админу: {e}")
         await message.answer(
-            "⚠️ Произошла ошибка при отправке заявки. Попробуйте позже или свяжитесь с поддержкой напрямую.\n\n"
+            "⚠️ Произошла ошибка при отправке заявки. Попробуйте позже.\n\n"
             "Вернуться к программам:",
             reply_markup=back_to_main_kb
         )
     
     await state.clear()
 
-# Запуск бота
+# --- ЗАПУСК БОТА ---
 async def main():
-      await bot.delete_webhook(drop_pending_updates=True)
+    await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
