@@ -1,363 +1,329 @@
 import asyncio
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from aiogram import BaseMiddleware
-from aiogram.types import TelegramObject
-from typing import Callable, Dict, Any, Awaitable
-from datetime import datetime, timedelta
+import logging
+from aiogram import Bot, Dispatcher, F, types
+from aiogram.filters import CommandStart
+from aiogram.types import (
+    ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+)
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 
-# ===== НАСТРОЙКИ =====
-TOKEN = "8617615907:AAEvE6tQZLwbd-Mmz_pPu2soVXpwD_crG4o"  # ВСТАВЬ СВОЙ ТОКЕН
-ADMIN_ID = 854447207  # ТВОЙ TELEGRAM ID
+# --- Конфигурация ---
+BOT_TOKEN = "ВАШ_ТОКЕН_БОТА"
+ADMIN_ID = 123456789  # Замените на ваш Telegram ID (число)
 
-# Словарь пользователей: {user_id: дата_окончания}
-USERS_ACCESS = {}
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
 
-# Доступ даётся на 7 дней (изменено с 30 на 7)
-DEFAULT_ACCESS_DAYS = 7
+# --- Клавиатуры ---
+# Главное меню с программами
+main_menu_kb = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="Программа «Восстановление»")],
+        [KeyboardButton(text="Программа «Гармония движения»")],
+        [KeyboardButton(text="Программа «Ресурсный код»")],
+        [KeyboardButton(text="Программа «Экспресс-обновление»")],
+        [KeyboardButton(text="Программа «Нейрофлоатинг»")]
+    ],
+    resize_keyboard=True
+)
 
-# Хранилище заявок
-PENDING_REQUESTS = {}
+# Кнопка завершения программы (после описания)
+complete_btn_kb = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(text="Программа пройдена ✅")]],
+    resize_keyboard=True
+)
 
-# Программы
-PROGRAMS = {
-    "recovery": {
-        "name": "Восстановление",
-        "description": "Мягкая практика для восстановления после нагрузок."
+# Кнопка "Программа пройдена ✅" (для Ресурсного кода)
+complete_alt_kb = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(text="Программа пройдена ✅")]],
+    resize_keyboard=True
+)
+
+# Кнопки после рекомендаций
+after_recommendations_kb = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="Вернуться к выбору программ")],
+        [KeyboardButton(text="Оставить заявку на клубную карту")]
+    ],
+    resize_keyboard=True
+)
+
+# Кнопка для возврата в главное меню (после заявки)
+back_to_main_kb = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(text="Вернуться к выбору программ")]],
+    resize_keyboard=True
+)
+
+# --- Состояния для заявки ---
+class OrderStates(StatesGroup):
+    waiting_for_phone = State()
+
+# --- Хранилище временных данных пользователя ---
+user_temp = {}
+
+# --- Описания программ ---
+programs_data = {
+    "Программа «Восстановление»": {
+        "description": (
+            "Программа «Восстановление»:\n"
+            "Комплексная перезагрузка систем организма за один визит. Программа устраняет «информационный шум», "
+            "обнуляет уровень кортизола и возвращает вас в состояние высокой продуктивности.\n\n"
+            "Что входит в программу:\n"
+            "1. Диагностика на аппарате Lotus Onyx - оцифровка биоритмов и уровня стресса.\n"
+            "2. Коррекционная сессия с телом - работа с ведущим специалистом центра по результатам диагностики.\n"
+            "3. Глубокое погружение (на выбор по показаниям) - флоатинг или детокс в японском модуле Iyashi Dome.\n"
+            "4. Нейро-настройка - погружение в капсулу Somadome или нейромедитация в модуле PrivateNap."
+        ),
+        "preparation": (
+            "⚠️ Важная подготовка к программе:\n"
+            "Для достижения максимального результата и корректности показателей диагностики, просим соблюдать следующие правила:\n\n"
+            "• Напитки: За 2 часа до начала исключите любые тонизирующие напитки (кофе, крепкий чай, энергетики).\n"
+            "• Алкоголь: Не употребляйте алкоголь минимум за 24 часа до визита.\n"
+            "• Цикл (для женщин): Программа не проводится в период цикла, а также за 1-2 дня до и 1-2 дня после его завершения.\n"
+            "• Медикаменты: Если вы принимаете антидепрессанты или нейролептики, обязательно сообщите об этом специалисту перед началом сессии — это влияет на выбор нейро-программ."
+        ),
+        "recommendations": [
+            "Для того, чтобы эффект от программы стал вашей новой нормой, мы рекомендуем перейти к ежедневному циклу самокоррекции.\n\n"
+            "Правила выполнения:\n"
+            "• Системность: Выполняйте практики ежедневно (утром или вечером).\n"
+            "• Дисциплина: Постарайтесь не делать перерывов, чтобы закрепить новые нейронные связи.\n"
+            "• Осознанность: Мы рекомендуем завести Дневник наблюдений. Фиксируйте изменения в своем состоянии, качестве сна и уровне энергии каждый день. Это поможет вам наглядно увидеть прогресс вашего состояния.\n"
+            "Ваш ресурс — это ежедневная стратегия",
+            "Ваш ежедневный план:\n"
+            "1. Дыхательная практика: Настройка вегетативной нервной системы. 👉 [Смотреть видео-инструкцию](https://t.me/c/2776024589/142)\n"
+            "2. Нейромедитация: Синхронизация работы полушарий и глубокое расслабление. 👉 (аудиофайл будет прикреплен позже)"
+        ]
     },
-    "resource": {
-        "name": "Ресурсный код",
-        "description": "Практика для наполнения энергией и внутренним ресурсом."
+    "Программа «Гармония движения»": {
+        "description": (
+            "Программа «Гармония движения»:\n"
+            "Профессиональное восстановление и биохакинг для атлетов и активных людей. Программа разработана для ускоренного восстановления после пиковых нагрузок. "
+            "Она помогает предотвратить травмы, снимает «мышечный панцирь» и балансирует нервную систему, возвращая телу легкость и взрывную энергию.\n\n"
+            "Что входит в программу:\n"
+            "1. Функциональный аудит: Диагностика на аппарате Lotus Onyx (оценка адаптационных резервов сердца и сосудов).\n"
+            "2. Глубокий детокс: Сеанс в японском модуле Iyashi Dome (инфракрасный прогрев, вывод лактата и продуктов распада, детоксикация на клеточном уровне).\n"
+            "3. Мануальная коррекция: Работа с телом от ведущего специалиста проекта (восстановление биомеханики, работа с триггерными точками и эластичностью мышц).\n"
+            "4. Нейро-восстановление: Нейромедитация в кресле PrivateNap и погружение в капсулу Somadome с использованием специализированных программ для физической и ментальной регенерации."
+        ),
+        "preparation": (
+            "⚠️ Правила подготовки к программе:\n"
+            "• Напитки: За 2 часа до начала исключите любые тонизирующие напитки (кофе, чай, предтренировочные комплексы).\n"
+            "• Алкоголь: Полный запрет за 24 часа до визита.\n"
+            "• Цикл (для женщин): Программа противопоказана в период цикла (а также за 1-2 дня до и после неё).\n"
+            "• Фармакология: Если вы принимаете антидепрессанты или нейролептики, обязательно уведомите об этом специалиста заранее — это критически важно для настройки программ Somadome.\n"
+            "Верните телу гармонию и ресурс для новых побед."
+        ),
+        "recommendations": [
+            "Для того, чтобы эффект от программы стал вашей новой нормой, мы рекомендуем перейти к ежедневному циклу самокоррекции.\n\n"
+            "Правила выполнения рекомендаций:\n"
+            "• Системность: Выполняйте практики ежедневно (утром или вечером).\n"
+            "• Дисциплина: Постарайтесь не делать перерывов, чтобы закрепить новые нейронные связи.\n"
+            "• Осознанность: Мы рекомендуем завести Дневник наблюдений. Фиксируйте изменения в своем состоянии, качестве сна и уровне энергии каждый день. Это поможет вам наглядно увидеть прогресс вашего состояния.\n"
+            "Ваш ресурс — это ежедневная стратегия.",
+            "Ваш ежедневный план:\n"
+            "1. Дыхательная практика: Настройка вегетативной нервной системы. 👉 [Смотреть видео-инструкцию](https://t.me/c/2776024589/142)\n"
+            "2. Нейромедитация: Синхронизация работы полушарий и глубокое расслабление. 👉 (аудиофайл будет прикреплен)"
+        ]
     },
-    "harmony": {
-        "name": "Гармония движения",
-        "description": "Плавные движения для баланса тела и ума."
+    "Программа «Ресурсный код»": {
+        "description": (
+            "Программа «Ресурсный код»:\n"
+            "Стратегическая активация потенциала и запуск новых смыслов.\n"
+            "Эта программа создана для тех, кто стоит перед важным вызовом, запуском нового проекта или поиском прорывной идеи. Мы работаем не только с телом, но и с информационным полем вашего сознания. "
+            "Программа «взламывает» привычные сценарии мышления, расширяет пропускную способность вашей психики и создает фундамент для реализации сверхзадач.\n\n"
+            "Что входит в программу:\n"
+            "1. Функциональный аудит: Диагностика на аппарате Lotus Onyx (определение текущей емкости вашей системы).\n"
+            "2. Телесно-ориентированная деблокация: Работа с терапевтом по снятию глубоких психосоматических зажимов.\n"
+            "3. Биоинформационная коррекция: Работа в уникальных модулях на базе Зеркал Козырева-Казначеева для синхронизации внутренних ритмов и получения инсайтов."
+        ),
+        "preparation": (
+            "⚠️ Подготовка к программе:\n"
+            "• Напитки: За 2 часа до начала исключите кофе, крепкий чай, энергетики.\n"
+            "• Алкоголь: Полный запрет за 24 часа до визита.\n"
+            "• Цикл(для женщин): Программа не проводится в период цикла (+/- 2 дня до и после).\n"
+            "• Медикаменты: Если вы принимаете антидепрессанты или нейролептики, обязательно сообщите об этом специалисту."
+        ),
+        "recommendations": [
+            "После «Ресурсного кода» ваша система становится крайне чувствительной к настройкам. Для стабилизации мы рекомендуем выполнять практики, которые придут ниже.\n\n"
+            "Правила выполнения:\n"
+            "• Системность: Выполняйте практики ежедневно без перерывов (утро/вечер).\n"
+            "• Дневник наблюдений: Обязательно фиксируйте новые идеи, инсайты и изменения в состоянии. Ваш прогресс — это база для долгосрочного масштабирования личности.\n"
+            "Раскройте свой истинный потенциал.",
+            "Ваш ежедневный план:\n"
+            "1. Дыхательная практика: Закрепление новой нейронной архитектуры. 👉 [Смотреть видео-инструкцию](https://t.me/c/2776024589/142)\n"
+            "2. Нейромедитация: Синхронизация работы полушарий для генерации идей. 👉 (аудиофайл)"
+        ]
     },
-    "express": {
-        "name": "Экспресс-обновление",
-        "description": "Быстрая практика для бодрости и ясности."
+    "Программа «Экспресс-обновление»": {
+        "description": (
+            "Программа «Экспресс-обновление»:\n"
+            "Быстрое возвращение в ресурс и эффективное снятие усталости.\n"
+            "Если вам нужно «здесь и сейчас» восстановить работоспособность, снять накопленное напряжение и вернуть ясность мышления, эта экспресс-программа — ваш идеальный выбор.\n"
+            "Это высокоэффективный протокол быстрого реагирования. За минимальное время вы получаете синергию телесной работы и высоких технологий для полного обнуления стресса.\n\n"
+            "Что входит в программу:\n"
+            "1. Функциональный аудит: Диагностика на аппарате Lotus Onyx (мгновенное считывание состояния вашей нервной системы).\n"
+            "2. Мануальная коррекция: Глубокая работа с телом от ведущего специалиста проекта (адресное снятие блоков и мышечных зажимов).\n"
+            "3. Нейро-восстановление (по результатам диагностики): Погружение в капсулу Somadome или сеанс нейромедитации в PrivateNap.\n"
+            "4. Био-поддержка: Кислородный бар в сочетании с персонализированной ароматерапией (при определенных показателях диагностики для закрепления эффекта)."
+        ),
+        "preparation": (
+            "⚠️ Подготовка к программе:\n"
+            "• Напитки: За 2 часа до начала исключите кофе, крепкий чай, энергетики.\n"
+            "• Алкоголь: Полный запрет за 24 часа до визита.\n"
+            "• Цикл (для женщин): Программа не проводится в период цикла (+/- 2 дня до и после).\n"
+            "• Медикаменты: Если вы принимаете антидепрессанты или нейролептики, обязательно сообщите об этом специалисту."
+        ),
+        "recommendations": [
+            "Для удержания состояния бодрости и высокого КПД мы рекомендуем практики ниже.\n\n"
+            "Правила выполнения:\n"
+            "• Системность: Выполняйте практики ежедневно без перерывов (утро/вечер).\n"
+            "• Дневник наблюдений: Фиксируйте уровень своей энергии и концентрации каждый день. Это поможет вам понять свой личный алгоритм входа в ресурсное состояние.\n"
+            "Верните себе продуктивность за один визит.",
+            "Ваш ежедневный план:\n"
+            "1. Дыхательная практика: Моментальное переключение вегетативной системы. 👉 [Смотреть видео-инструкцию](https://t.me/c/2776024589/142)\n"
+            "2. Нейромедитация: Поддержание ментального баланса и фокуса. 👉 (аудиофайл)"
+        ]
     },
-     "floating": {
-        "name": "Нейрофлоатинг",
-        "description": "Авторская практика ментора проекта Михаила Бирюкова для снятия глубокого физического и эмоционального напряжения."
+    "Программа «Нейрофлоатинг»": {
+        "description": (
+            "Программа «Нейрофлоатинг» с Михаилом Бирюковым 🌊\n"
+            "Глубинное обнуление и пересборка ресурсного состояния для лидеров.\n\n"
+            "Эта программа разработана специально для владельцев бизнеса, топ-менеджеров и лидеров мнений — людей с экстремальной степенью ответственности и высокой когнитивной нагрузкой. "
+            "Это «точка абсолютной тишины» в мире бесконечного шума.\n\n"
+            "Этапы прохождения программы:\n"
+            "1. Теоретический модуль и настрой: Введение в методологию ПМНК. Понимание механизмов работы мозга и тела для осознанного погружения.\n"
+            "2. Цифровой чекап: Диагностика на аппарате Lotus Onyx (фиксация исходного состояния вегетативной нервной системы).\n"
+            "3. Телесная нейрокоррекция: Работа с ментором проекта Михаилом Бирюковым. Деблокация «мышечного панциря» и подготовка тела к состоянию невесомости.\n"
+            "4. Погружение во Флоатинг: Сессия сенсорной депривации в высококонцентрированном растворе соли Эпсома. Полное отсутствие внешних раздражителей для тотального ментального обнуления.\n"
+            "5. Психокоррекционная интеграция: Вторая часть сессии с Михаилом Бирюковым. Работа с опытом, полученным во флоатинге, трансформация инсайтов в конкретные решения и психокоррекция.\n"
+            "6. Кислородная терапия: Завершающий этап для насыщения систем организма и мягкого возвращения в активное состояние."
+        ),
+        "preparation": (
+            "⚠️ Правила подготовки:\n"
+            "• Напитки: За 2 часа до начала исключите любые тонизирующие напитки (кофе, чай, энергетики).\n"
+            "• Алкоголь: Полный запрет за 24 часа до визита.\n"
+            "• Цикл (для женщин): Программа не проводится в период цикла (+/- 2 дня до и после).\n"
+            "• Медикаменты: Если вы принимаете антидепрессанты или нейролептики, обязательно сообщите об этом ментору. Это критически важно для корректного ведения сессии."
+        ),
+        "recommendations": [
+            "Нейрофлоатинг открывает «окно пластичности» вашего мозга. Чтобы закрепить эффект глубокого спокойствия и ясности, Михаил Бирюков рекомендует следующие практики.\n\n"
+            "Правила выполнения:\n"
+            "• Системность: Каждый день (утро/вечер) без исключений.\n"
+            "• Дневник наблюдений: Обязательно ведите ежедневные записи своих состояний, реакций и идей. Это позволит оцифровать качественный скачок в вашей личной и деловой эффективности.",
+            "Ваш ежедневный план:\n"
+            "1. Дыхательная практика: Удержание парасимпатического тонуса. 👉 [Смотреть видео-инструкцию](https://t.me/c/2776024589/142)\n"
+            "2. Нейромедитация: Синхронизация состояний. 👉 (аудиофайл)\n\n"
+            "Станьте хозяином своего состояния."
+        ]
     }
 }
 
-bot = Bot(token=TOKEN)
+# --- Обработчики бота ---
+bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# ===== ПРОВЕРКА ДОСТУПА =====
-def is_user_allowed(user_id: int) -> bool:
-    if user_id == ADMIN_ID:
-        return True
-    if user_id not in USERS_ACCESS:
-        return False
-    expiry_date = USERS_ACCESS[user_id]
-    if expiry_date > datetime.now():
-        return True
-    else:
-        del USERS_ACCESS[user_id]
-        return False
-
-def request_access_keyboard():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📝 Подать заявку на доступ", callback_data="request_access")]
-    ])
-
-def main_menu():
-    buttons = []
-    for key, prog in PROGRAMS.items():
-        buttons.append([InlineKeyboardButton(text=prog["name"], callback_data=key)])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-# ===== MIDDLEWARE =====
-class AccessMiddleware(BaseMiddleware):
-    async def __call__(
-        self,
-        handler: Callable[[TelegramObject, Dict[str, Any]], Awaitable[Any]],
-        event: TelegramObject,
-        data: Dict[str, Any]
-    ) -> Any:
-        user = None
-        if hasattr(event, 'from_user'):
-            user = event.from_user
-        elif hasattr(event, 'message') and event.message:
-            user = event.message.from_user
-        elif hasattr(event, 'callback_query') and event.callback_query:
-            user = event.callback_query.from_user
-        
-        if user:
-            user_id = user.id
-            
-            if user_id == ADMIN_ID:
-                return await handler(event, data)
-            
-            is_auth_command = False
-            if hasattr(event, 'message') and event.message:
-                text = event.message.text or ""
-                if text.startswith('/start') or text.startswith('/status') or text.startswith('/expiry'):
-                    is_auth_command = True
-            if hasattr(event, 'callback_query') and event.callback_query:
-                if event.callback_query.data in ["request_access", "menu"]:
-                    is_auth_command = True
-            
-            if not is_user_allowed(user_id) and not is_auth_command:
-                if hasattr(event, 'message') and event.message:
-                    await event.message.answer(
-                        "🚫 Доступ запрещён\n\n"
-                        "Нажмите кнопку ниже, чтобы отправить заявку администратору.",
-                        reply_markup=request_access_keyboard()
-                    )
-                elif hasattr(event, 'callback_query') and event.callback_query:
-                    if event.callback_query.message:
-                        await event.callback_query.message.answer(
-                            "🚫 Доступ запрещён\n\n"
-                            "Нажмите кнопку ниже, чтобы отправить заявку администратору.",
-                            reply_markup=request_access_keyboard()
-                        )
-                    await event.callback_query.answer()
-                return
-        
-        return await handler(event, data)
-
-# ===== КОМАНДА /start =====
-@dp.message(Command("start"))
+@dp.message(CommandStart())
 async def cmd_start(message: types.Message):
     user_id = message.from_user.id
-    
-    if is_user_allowed(user_id):
-        await message.answer(
-            "🌟 Добро пожаловать!\n\nВыберите программу:",
-            reply_markup=main_menu()
-        )
-    else:
-        await message.answer(
-            "🌟 Добро пожаловать!\n\n"
-            "Этот бот содержит закрытый контент.\n"
-            "Чтобы получить доступ, нажмите кнопку ниже и дождитесь одобрения администратора.",
-            reply_markup=request_access_keyboard()
-        )
-
-# ===== ОТПРАВКА ЗАЯВКИ =====
-@dp.callback_query(lambda c: c.data == "request_access")
-async def request_access(callback: types.CallbackQuery):
-    await callback.answer()
-    
-    user_id = callback.from_user.id
-    username = callback.from_user.username or "нет username"
-    full_name = callback.from_user.full_name
-    
-    if is_user_allowed(user_id):
-        await callback.message.answer("✅ У вас уже есть доступ! Выберите программу:", reply_markup=main_menu())
-        return
-    
-    PENDING_REQUESTS[user_id] = {
-        "username": username,
-        "full_name": full_name,
-        "user_id": user_id
-    }
-    
-    admin_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="✅ Принять", callback_data=f"approve_{user_id}"),
-            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"deny_{user_id}")
-        ]
-    ])
-    
-    await bot.send_message(
-        ADMIN_ID,
-        f"📝 Новая заявка на доступ!\n\n"
-        f"👤 Имя: {full_name}\n"
-        f"🆔 Username: @{username}\n"
-        f"📱 ID: {user_id}",
-        reply_markup=admin_keyboard
-    )
-    
-    await callback.message.answer(
-        "✅ Заявка отправлена!\n\n"
-        "Администратор рассмотрит ваш запрос в ближайшее время.\n"
-        "После одобрения вы получите уведомление."
-    )
-
-# ===== ОБРАБОТКА РЕШЕНИЯ АДМИНИСТРАТОРА (кнопки) =====
-@dp.callback_query(lambda c: c.data.startswith("approve_") or c.data.startswith("deny_"))
-async def handle_admin_decision(callback: types.CallbackQuery):
-    await callback.answer()
-    
-    if callback.from_user.id != ADMIN_ID:
-        await callback.answer("⛔ У вас нет прав.", show_alert=True)
-        return
-    
-    action, user_id_str = callback.data.split("_")
-    user_id = int(user_id_str)
-    
-    if action == "approve":
-        expiry_date = datetime.now() + timedelta(days=DEFAULT_ACCESS_DAYS)
-        USERS_ACCESS[user_id] = expiry_date
-        
-        user_info = PENDING_REQUESTS.pop(user_id, {"full_name": "Пользователь"})
-        
-        await callback.message.edit_text(
-            f"✅ Пользователь {user_info['full_name']} добавлен!"
-        )
-        
-        try:
-            await bot.send_message(
-                user_id,
-                f"🎉 Доступ одобрен!\n\n"
-                f"Доступ активен до {expiry_date.strftime('%d.%m.%Y')}.\n"
-                f"Нажмите /start, чтобы начать."
-            )
-        except Exception as e:
-            await callback.message.answer(f"⚠️ Не удалось отправить сообщение: {e}")
-        
-        await callback.answer("✅ Одобрено")
-        
-    elif action == "deny":
-        user_info = PENDING_REQUESTS.pop(user_id, {"full_name": "Пользователь"})
-        
-        await callback.message.edit_text(
-            f"❌ Заявка от {user_info['full_name']} отклонена"
-        )
-        
-        try:
-            await bot.send_message(
-                user_id,
-                "😔 Доступ отклонён\n\nАдминистратор отклонил вашу заявку."
-            )
-        except Exception:
-            pass
-        
-        await callback.answer("❌ Отклонён")
-
-# ===== КОМАНДА АДМИНИСТРАТОРА: /adduser =====
-@dp.message(Command("adduser"))
-async def add_user_command(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
-        await message.answer("⛔ У вас нет прав.")
-        return
-    
-    parts = message.text.split()
-    
-    if len(parts) not in [2, 3]:
-        await message.answer(
-            "❌ Неправильный формат.\n\n"
-            "Используйте:\n"
-            "/adduser 123456789 — добавить на 7 дней\n"
-            "/adduser 123456789 14 — добавить на 14 дней"
-        )
-        return
-    
-    try:
-        user_id = int(parts[1])
-        days = int(parts[2]) if len(parts) == 3 else DEFAULT_ACCESS_DAYS
-    except ValueError:
-        await message.answer("❌ ID и количество дней должны быть числами.")
-        return
-    
-    expiry_date = datetime.now() + timedelta(days=days)
-    USERS_ACCESS[user_id] = expiry_date
-    
     await message.answer(
-        f"✅ Пользователь {user_id} добавлен!\n"
-        f"📅 Доступ до: {expiry_date.strftime('%d.%m.%Y')} (на {days} дней)"
+        "Добро пожаловать! Пожалуйста, выберете забронированную Вами программу:",
+        reply_markup=main_menu_kb
+    )
+
+@dp.message(F.text.in_(list(programs_data.keys())))
+async def show_program(message: types.Message, state: FSMContext):
+    program_name = message.text
+    data = programs_data[program_name]
+    user_id = message.from_user.id
+    user_temp[user_id] = {"program": program_name}
+    
+    # Отправляем описание программы
+    await message.answer(data["description"], parse_mode="Markdown")
+    # Отправляем подготовку
+    await message.answer(data["preparation"], parse_mode="Markdown")
+    
+    # Выбираем нужную кнопку завершения
+    if program_name == "Программа «Ресурсный код»":
+        await message.answer("Нажмите, когда пройдете программу:", reply_markup=complete_alt_kb)
+    else:
+        await message.answer("Нажмите, когда пройдете программу:", reply_markup=complete_btn_kb)
+
+@dp.message(F.text.in_(["Программа пройдена ✅", "Я прошел программу ✅"]))
+async def program_completed(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    program_name = user_temp.get(user_id, {}).get("program")
+    if not program_name:
+        await message.answer("Сначала выберите программу из меню.", reply_markup=main_menu_kb)
+        return
+    
+    data = programs_data.get(program_name)
+    if data:
+        for rec in data["recommendations"]:
+            await message.answer(rec, parse_mode="Markdown", disable_web_page_preview=True)
+        
+        # Кнопки после рекомендаций
+        await message.answer(
+            "Выберите дальнейшее действие:",
+            reply_markup=after_recommendations_kb
+        )
+    else:
+        await message.answer("Ошибка. Попробуйте снова.", reply_markup=main_menu_kb)
+
+@dp.message(F.text == "Вернуться к выбору программ")
+async def back_to_main(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.answer(
+        "Добро пожаловать! Пожалуйста, выберете забронированную Вами программу:",
+        reply_markup=main_menu_kb
+    )
+
+@dp.message(F.text == "Оставить заявку на клубную карту")
+async def ask_contact(message: types.Message, state: FSMContext):
+    await message.answer(
+        "Пожалуйста, отправьте ваш номер телефона и имя в одном сообщении.\n"
+        "Пример: +7 123 456 78 90, Иван Иванов\n\n"
+        "Эти данные будут переданы администратору для связи."
+    )
+    await state.set_state(OrderStates.waiting_for_phone)
+
+@dp.message(OrderStates.waiting_for_phone)
+async def receive_contact(message: types.Message, state: FSMContext):
+    contact_info = message.text
+    user = message.from_user
+    user_id = user.id
+    username = user.username or "Нет username"
+    full_name = user.full_name
+    
+    # Формируем сообщение админу
+    admin_msg = (
+        f"📩 Новая заявка на клубную карту!\n"
+        f"👤 Имя: {full_name}\n"
+        f"🆔 User ID: {user_id}\n"
+        f"🔗 Username: @{username}\n"
+        f"📞 Контакт от пользователя: {contact_info}\n"
+        f"📅 Программа, которую проходил: {user_temp.get(user_id, {}).get('program', 'Неизвестно')}"
     )
     
     try:
-        await bot.send_message(
-            user_id,
-            f"🎉 Вам открыт доступ к боту!\n\n"
-            f"Доступ активен до {expiry_date.strftime('%d.%m.%Y')}.\n"
-            f"Нажмите /start, чтобы начать."
-        )
-    except Exception:
-        pass
-
-# ===== КОМАНДА АДМИНИСТРАТОРА: список пользователей =====
-@dp.message(Command("users"))
-async def list_users(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
-        await message.answer("⛔ У вас нет прав.")
-        return
-    
-    if not USERS_ACCESS:
-        await message.answer("📋 Список пользователей пуст.")
-        return
-    
-    users_list = []
-    for uid, expiry_date in USERS_ACCESS.items():
-        if expiry_date > datetime.now():
-            days_left = (expiry_date - datetime.now()).days
-            status = f"✅ до {expiry_date.strftime('%d.%m.%Y')} (осталось {days_left} дн.)"
-        else:
-            status = "❌ истёк"
-        users_list.append(f"• {uid} — {status}")
-    
-    await message.answer("👥 Пользователи с доступом:\n\n" + "\n".join(users_list))
-
-# ===== КОМАНДА ДЛЯ ПОЛЬЗОВАТЕЛЯ: узнать срок доступа =====
-@dp.message(Command("expiry"))
-async def check_expiry(message: types.Message):
-    user_id = message.from_user.id
-    
-    if user_id == ADMIN_ID:
-        await message.answer("👑 Вы администратор, доступ всегда есть.")
-        return
-    
-    if user_id not in USERS_ACCESS:
-        await message.answer("⏳ У вас нет активного доступа.")
-        return
-    
-    expiry_date = USERS_ACCESS[user_id]
-    if expiry_date > datetime.now():
-        days_left = (expiry_date - datetime.now()).days
+        await bot.send_message(ADMIN_ID, admin_msg)
         await message.answer(
-            f"✅ Доступ активен до: {expiry_date.strftime('%d.%m.%Y')}\n"
-            f"📆 Осталось дней: {days_left}"
+            "✅ Спасибо! Ваша заявка передана администратору. Он свяжется с вами в ближайшее время.\n\n"
+            "Вы можете вернуться к выбору программ:",
+            reply_markup=back_to_main_kb
         )
-    else:
-        await message.answer("❌ Срок доступа истёк.")
-
-# ===== КОМАНДА ДЛЯ ПРОВЕРКИ СТАТУСА =====
-@dp.message(Command("status"))
-async def check_status(message: types.Message):
-    user_id = message.from_user.id
-    if is_user_allowed(user_id):
-        await message.answer("✅ У вас есть доступ к боту!")
-    else:
-        await message.answer("⏳ У вас пока нет доступа.")
-
-# ===== ОБРАБОТКА ВЫБОРА ПРОГРАММЫ =====
-@dp.callback_query()
-async def handle_choice(callback: types.CallbackQuery):
-    if not is_user_allowed(callback.from_user.id):
-        await callback.answer("⛔ У вас нет доступа.", show_alert=True)
-        return
-    
-    if callback.data == "menu":
-        await callback.message.answer("Главное меню:", reply_markup=main_menu())
-        await callback.answer()
-        return
-    
-    prog = PROGRAMS.get(callback.data)
-    if prog:
-        await callback.message.answer(
-            f"📋 {prog['name']}\n\n{prog['description']}\n\n(Видео и аудио будут добавлены позже)"
+    except Exception as e:
+        logging.error(f"Не удалось отправить сообщение админу: {e}")
+        await message.answer(
+            "⚠️ Произошла ошибка при отправке заявки. Попробуйте позже или свяжитесь с поддержкой напрямую.\n\n"
+            "Вернуться к программам:",
+            reply_markup=back_to_main_kb
         )
-        back_btn = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 В главное меню", callback_data="menu")]
-        ])
-        await callback.message.answer("Что дальше?", reply_markup=back_btn)
-    await callback.answer()
+    
+    await state.clear()
 
-# ===== ЗАПУСК =====
-dp.update.middleware(AccessMiddleware())
-
+# Запуск бота
 async def main():
-    print("✅ Бот запущен!")
-    print(f"👑 Администратор: {ADMIN_ID}")
-    print(f"📅 Доступ по умолчанию: {DEFAULT_ACCESS_DAYS} дней")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
