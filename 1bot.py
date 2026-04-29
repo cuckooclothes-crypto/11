@@ -320,7 +320,7 @@ async def back_to_main(message: types.Message, state: FSMContext):
     )
 
 
-@dp.message(F.text == "💎 Оставить заявку на карту")
+@dp.message(F.text == "💎 Оставить заявку на клубную карту")
 async def ask_contact(message: types.Message, state: FSMContext):
     await message.answer(
         "💎 <b>Оформление клубной карты</b> 💎\n\n"
