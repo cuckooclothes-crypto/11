@@ -309,7 +309,7 @@ async def program_completed(message: types.Message):
     )
 
 
-@dp.message(F.text == "◀️ Вернуться к программам")
+@dp.message(F.text == "◀️ Вернуться к выбору программ")
 async def back_to_main(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer(
