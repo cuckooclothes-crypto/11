@@ -375,12 +375,11 @@ async def receive_contact(message: types.Message, state: FSMContext):
 # ==================== ЗАПУСК БОТА ====================
 async def main():
     await bot.delete_webhook(drop_pending_updates=True)
-    # Получаем информацию о боте (исправлено)
     me = await bot.get_me()
     print("🤖 Бот успешно запущен!")
     print(f"📡 @{me.username} готов к работе")
     await dp.start_polling(bot)
 
 
-if __name__ "__main__":
+if __name__ == "__main__":
     asyncio.run(main())
